@@ -31,12 +31,15 @@ Required variables:
 
 Optional:
 
+- `AZURE_OPENAI_ENABLE_REASONING_EFFORT=false`
 - `AZURE_OPENAI_REASONING_EFFORT=low`
 
-The current `gpt-4o` Azure chat deployment may reject `reasoning_effort`; the API route automatically retries without it when unsupported.
+Keep `AZURE_OPENAI_ENABLE_REASONING_EFFORT=false` for faster replies on normal chat deployments. Turn it on only for deployments that support `reasoning_effort`.
 
 ## Build
 
 ```powershell
 npm.cmd run build
 ```
+
+# Zex
