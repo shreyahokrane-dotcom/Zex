@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, ReactNode, useMemo, useState } from "react";
-import { firebaseApp } from "../lib/firebase";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { firebaseApp, firebaseAuth, firestoreDb } from "../lib/firebase";
 
 type Message = {
   id: number;
@@ -18,6 +19,7 @@ type ImageResult = {
 type VideoResult = {
   videoUrl: string;
   prompt: string;
+  firestoreId?: string;
 };
 
 const initialMessage: Message = {
@@ -339,6 +341,30 @@ export default function Home() {
         videoUrl: data.videoUrl,
         prompt: text,
       });
+
+      try {
+        const videoUrlCanBeStored = !data.videoUrl.startsWith("data:");
+        const videoDocument = await addDoc(collection(firestoreDb, "generatedVideos"), {
+          createdAt: serverTimestamp(),
+          prompt: text,
+          videoUrl: videoUrlCanBeStored ? data.videoUrl : "",
+          videoStorageType: videoUrlCanBeStored ? "url" : "inline_data_not_saved",
+          userEmail: firebaseAuth.currentUser?.email || null,
+          userId: firebaseAuth.currentUser?.uid || null,
+        });
+
+        setVideoResult({
+          videoUrl: data.videoUrl,
+          prompt: text,
+          firestoreId: videoDocument.id,
+        });
+      } catch (saveError) {
+        setVideoError(
+          saveError instanceof Error
+            ? `Video generated, but Firestore save failed: ${saveError.message}`
+            : "Video generated, but Firestore save failed.",
+        );
+      }
     } catch (error) {
       setVideoError(
         error instanceof Error ? error.message : "Zex could not connect to video generation.",
@@ -589,7 +615,12 @@ export default function Home() {
               ) : null}
             </div>
 
-            {videoResult ? <p className="imagePrompt">{videoResult.prompt}</p> : null}
+            {videoResult ? (
+              <p className="imagePrompt">
+                {videoResult.prompt}
+                {videoResult.firestoreId ? ` Saved as ${videoResult.firestoreId}.` : ""}
+              </p>
+            ) : null}
           </section>
         </div>
       ) : null}
