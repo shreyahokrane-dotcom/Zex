@@ -51,7 +51,7 @@ textarea:disabled {
 .shell {
   position: relative;
   display: grid;
-  grid-template-columns: 294px minmax(0, 1fr);
+  grid-template-columns: 308px minmax(0, 1fr);
   min-height: 100vh;
   overflow: hidden;
   background:
@@ -99,7 +99,7 @@ textarea:disabled {
 }
 
 .sidebarOpen .sidebarToggle {
-  left: 238px;
+  left: 252px;
 }
 
 .sidebarToggle:hover {
@@ -1076,15 +1076,16 @@ h1 {
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
-    width: min(294px, 82vw);
+    z-index: 4;
+    width: min(320px, 92vw);
     min-height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-    border-right: 1px solid var(--line);
+    border-right: 1px solid rgba(244, 217, 130, 0.22);
+    border-bottom: 0;
   }
 
   .sidebarOpen .sidebarToggle {
-    left: min(calc(82vw - 56px), 238px);
+    left: min(calc(92vw - 56px), 264px);
+    z-index: 5;
   }
 
   .shell.sidebarOpen .sidebar {
@@ -1092,18 +1093,11 @@ h1 {
   }
 
   .sidebarTop {
-    padding-top: 52px;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
+    padding-top: 56px;
   }
 
   .newChat {
-    min-width: 132px;
-  }
-
-  .history,
-  .account {
-    display: none;
+    width: 100%;
   }
 
   .chatPanel {
@@ -1121,16 +1115,15 @@ h1 {
 
 @media (max-width: 560px) {
   .sidebar {
-    padding: 12px;
+    width: min(308px, 94vw);
+    padding: 14px;
   }
 
-  .brand span,
   .modelButton {
     display: none;
   }
 
   .newChat {
-    min-width: 44px;
     padding: 0 12px;
   }
 
