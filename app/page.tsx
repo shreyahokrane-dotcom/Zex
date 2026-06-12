@@ -208,6 +208,7 @@ export default function Home() {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [historyStatus, setHistoryStatus] = useState("Connecting to Firestore...");
 
   const activeTitle = useMemo(() => {
     const firstUserMessage = messages.find((message) => message.role === "user");
@@ -227,6 +228,7 @@ export default function Home() {
     return onSnapshot(
       recentsQuery,
       (snapshot) => {
+        setHistoryStatus("Firestore connected");
         setRecentChats(
           snapshot.docs.map((doc) => {
             const data = doc.data() as {
@@ -247,8 +249,9 @@ export default function Home() {
           }),
         );
       },
-      () => {
+      (error) => {
         setRecentChats([]);
+        setHistoryStatus(`Firestore error: ${error.message}`);
       },
     );
   }, []);
@@ -306,13 +309,15 @@ export default function Home() {
       const completedMessages = [...nextMessages, zexMessage];
 
       setMessages(completedMessages);
+      setHistoryStatus("Saving chat history...");
 
       try {
         const historyPayload = {
           messages: completedMessages,
           prompt: text,
           responsePreview: content.slice(0, 240),
-          title: completedMessages.find((message) => message.role === "user")?.content.slice(0, 42) ||
+          title:
+            completedMessages.find((message) => message.role === "user")?.content.slice(0, 42) ||
             text.slice(0, 42),
           updatedAt: serverTimestamp(),
           userEmail: firebaseAuth.currentUser?.email || null,
@@ -329,8 +334,13 @@ export default function Home() {
 
           setActiveChatId(chatDocument.id);
         }
-      } catch {
-        // Chat should remain usable even if Firestore history rules reject the write.
+        setHistoryStatus("Chat history saved");
+      } catch (saveError) {
+        setHistoryStatus(
+          saveError instanceof Error
+            ? `Firestore save failed: ${saveError.message}`
+            : "Firestore save failed. Check Firestore rules and authentication.",
+        );
       }
     } catch (error) {
       setMessages((current) => [
@@ -524,6 +534,7 @@ export default function Home() {
 
         <nav className="history" aria-label="Recent chats">
           <p>Recent</p>
+          <span className="historyStatus">{historyStatus}</span>
           {visibleRecentChats.map((item) => (
             <button
               className={item.id === activeChatId ? "activeHistory" : ""}

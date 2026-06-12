@@ -262,6 +262,13 @@ textarea:disabled {
   text-transform: uppercase;
 }
 
+.historyStatus {
+  padding: 0 2px 4px;
+  color: var(--gold-soft);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 .history button {
   min-height: 38px;
   padding: 0 12px;
