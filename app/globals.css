@@ -51,21 +51,18 @@ textarea:disabled {
 .shell {
   position: relative;
   display: grid;
-  grid-template-columns: 308px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   min-height: 100vh;
   overflow: hidden;
   background:
     linear-gradient(90deg, rgba(217, 170, 47, 0.04), transparent 24rem),
     repeating-linear-gradient(90deg, rgba(255, 247, 227, 0.018) 0 1px, transparent 1px 84px);
-  transition: grid-template-columns 0.32s ease;
-}
-
-.shell.sidebarClosed {
-  grid-template-columns: 0 minmax(0, 1fr);
+  transition: none;
 }
 
 .shell.sidebarClosed .sidebar {
-  transform: translateX(-100%);
+  pointer-events: none;
+  transform: translateX(calc(-100% - 18px));
 }
 
 .shell::before {
@@ -83,7 +80,7 @@ textarea:disabled {
   position: fixed;
   top: 18px;
   left: 18px;
-  z-index: 3;
+  z-index: 10;
   display: grid;
   place-items: center;
   width: 42px;
@@ -99,7 +96,7 @@ textarea:disabled {
 }
 
 .sidebarOpen .sidebarToggle {
-  left: 252px;
+  left: 270px;
 }
 
 .sidebarToggle:hover {
@@ -134,6 +131,15 @@ textarea:disabled {
   transform: translateY(-6px) rotate(-45deg);
 }
 
+.sidebarBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  border: 0;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(3px);
+}
+
 .backgroundVideo {
   position: fixed;
   inset: 0;
@@ -146,11 +152,13 @@ textarea:disabled {
 }
 
 .sidebar {
-  position: relative;
-  z-index: 1;
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 5;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  width: min(320px, 92vw);
   min-height: 100vh;
   padding: 16px;
   border-right: 1px solid rgba(244, 217, 130, 0.18);
@@ -1064,32 +1072,8 @@ h1 {
 }
 
 @media (max-width: 860px) {
-  .shell {
-    grid-template-columns: 1fr;
-  }
-
-  .shell.sidebarClosed,
-  .shell.sidebarOpen {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 4;
-    width: min(320px, 92vw);
-    min-height: auto;
-    border-right: 1px solid rgba(244, 217, 130, 0.22);
-    border-bottom: 0;
-  }
-
   .sidebarOpen .sidebarToggle {
-    left: min(calc(92vw - 56px), 264px);
-    z-index: 5;
-  }
-
-  .shell.sidebarOpen .sidebar {
-    transform: translateX(0);
+    left: min(calc(92vw - 56px), 270px);
   }
 
   .sidebarTop {

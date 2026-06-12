@@ -514,6 +514,15 @@ export default function Home() {
         <span aria-hidden="true" />
       </button>
 
+      {isSidebarOpen ? (
+        <button
+          className="sidebarBackdrop"
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      ) : null}
+
       <aside className="sidebar" aria-label="Conversation navigation">
         <div className="sidebarTop">
           <div className="brand">
