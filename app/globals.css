@@ -273,6 +273,7 @@ textarea:disabled {
 }
 
 .history button:hover,
+.history button.activeHistory,
 .newChat:hover,
 .starterGrid button:hover,
 .modelButton:hover,

@@ -4,11 +4,13 @@ import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useState } fro
 import {
   addDoc,
   collection,
+  doc,
   limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  updateDoc,
 } from "firebase/firestore";
 import { firebaseApp, firebaseAuth, firestoreDb } from "../lib/firebase";
 
@@ -33,6 +35,7 @@ type VideoResult = {
 type RecentChat = {
   id: string;
   title: string;
+  messages: Message[];
 };
 
 const initialMessage: Message = {
@@ -57,6 +60,20 @@ const fallbackHistory = [
   "Content calendar",
   "API integration",
 ];
+
+function isSavedMessage(value: unknown): value is Message {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const message = value as Partial<Message>;
+
+  return (
+    typeof message.id === "number" &&
+    (message.role === "user" || message.role === "zex") &&
+    typeof message.content === "string"
+  );
+}
 
 function formatInline(text: string): ReactNode[] {
   return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) => {
@@ -190,6 +207,7 @@ export default function Home() {
   const [videoError, setVideoError] = useState("");
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   const activeTitle = useMemo(() => {
     const firstUserMessage = messages.find((message) => message.role === "user");
@@ -197,7 +215,7 @@ export default function Home() {
   }, [messages]);
   const visibleRecentChats = recentChats.length
     ? recentChats
-    : fallbackHistory.map((title) => ({ id: title, title }));
+    : fallbackHistory.map((title) => ({ id: title, title, messages: [initialMessage] }));
 
   useEffect(() => {
     const recentsQuery = query(
@@ -211,11 +229,19 @@ export default function Home() {
       (snapshot) => {
         setRecentChats(
           snapshot.docs.map((doc) => {
-            const data = doc.data() as { title?: string; prompt?: string };
+            const data = doc.data() as {
+              messages?: unknown;
+              title?: string;
+              prompt?: string;
+            };
             const title = data.title || data.prompt || "Untitled chat";
+            const savedMessages = Array.isArray(data.messages)
+              ? data.messages.filter(isSavedMessage)
+              : [];
 
             return {
               id: doc.id,
+              messages: savedMessages.length ? savedMessages : [initialMessage],
               title: title.slice(0, 42),
             };
           }),
@@ -226,6 +252,14 @@ export default function Home() {
       },
     );
   }, []);
+
+  function loadHistoryChat(chat: RecentChat) {
+    setActiveChatId(chat.id);
+    setMessages(chat.messages);
+    setPrompt("");
+    setImageError("");
+    setVideoError("");
+  }
 
   async function submitMessage(event?: FormEvent<HTMLFormElement>, starter?: string) {
     event?.preventDefault();
@@ -264,24 +298,40 @@ export default function Home() {
       }
 
       const content = data.content;
+      const zexMessage: Message = {
+        id: Date.now() + 1,
+        role: "zex",
+        content,
+      };
+      const completedMessages = [...nextMessages, zexMessage];
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: Date.now() + 1,
-          role: "zex",
-          content,
-        },
-      ]);
+      setMessages(completedMessages);
 
-      await addDoc(collection(firestoreDb, "recentChats"), {
-        createdAt: serverTimestamp(),
-        prompt: text,
-        responsePreview: content.slice(0, 240),
-        title: text.slice(0, 42),
-        userEmail: firebaseAuth.currentUser?.email || null,
-        userId: firebaseAuth.currentUser?.uid || null,
-      });
+      try {
+        const historyPayload = {
+          messages: completedMessages,
+          prompt: text,
+          responsePreview: content.slice(0, 240),
+          title: completedMessages.find((message) => message.role === "user")?.content.slice(0, 42) ||
+            text.slice(0, 42),
+          updatedAt: serverTimestamp(),
+          userEmail: firebaseAuth.currentUser?.email || null,
+          userId: firebaseAuth.currentUser?.uid || null,
+        };
+
+        if (activeChatId) {
+          await updateDoc(doc(firestoreDb, "recentChats", activeChatId), historyPayload);
+        } else {
+          const chatDocument = await addDoc(collection(firestoreDb, "recentChats"), {
+            ...historyPayload,
+            createdAt: serverTimestamp(),
+          });
+
+          setActiveChatId(chatDocument.id);
+        }
+      } catch {
+        // Chat should remain usable even if Firestore history rules reject the write.
+      }
     } catch (error) {
       setMessages((current) => [
         ...current,
@@ -302,6 +352,7 @@ export default function Home() {
   }
 
   function resetChat() {
+    setActiveChatId(null);
     setMessages([initialMessage]);
     setPrompt("");
   }
@@ -474,7 +525,12 @@ export default function Home() {
         <nav className="history" aria-label="Recent chats">
           <p>Recent</p>
           {visibleRecentChats.map((item) => (
-            <button key={item.id} type="button">
+            <button
+              className={item.id === activeChatId ? "activeHistory" : ""}
+              key={item.id}
+              type="button"
+              onClick={() => loadHistoryChat(item)}
+            >
               {item.title}
             </button>
           ))}
