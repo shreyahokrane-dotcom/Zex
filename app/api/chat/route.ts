@@ -27,24 +27,35 @@ type AzureRequestBody = {
 };
 
 const systemPrompt =
-  "You are Zex, a helpful AI assistant. Answer clearly, directly, and use a polished black-and-gold product tone without being verbose.";
+  "You are Zex, a helpful AI assistant. Answer clearly and directly. Keep responses concise unless the user asks for detail.";
+const maxContextMessages = 8;
+const maxResponseTokens = 450;
+const azureTimeoutMs = 20000;
 
 async function sendAzureRequest(
   targetUrl: string,
   apiKey: string,
   requestBody: AzureRequestBody,
 ) {
-  const response = await fetch(targetUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "api-key": apiKey,
-    },
-    body: JSON.stringify(requestBody),
-  });
-  const data = (await response.json().catch(() => ({}))) as AzureResponse;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), azureTimeoutMs);
 
-  return { response, data };
+  try {
+    const response = await fetch(targetUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+    const data = (await response.json().catch(() => ({}))) as AzureResponse;
+
+    return { response, data };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -65,25 +76,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No messages were provided." }, { status: 400 });
   }
 
+  const recentMessages = messages.slice(-maxContextMessages);
   const azureMessages = [
     { role: "system", content: systemPrompt },
-    ...messages.map((message) => ({
+    ...recentMessages.map((message) => ({
       role: message.role === "zex" ? "assistant" : "user",
       content: message.content,
     })),
   ];
   const requestBody: AzureRequestBody = {
     messages: azureMessages,
-    temperature: 0.7,
-    max_tokens: 900,
+    temperature: 0.45,
+    max_tokens: maxResponseTokens,
   };
-  const reasoningEffort = process.env.AZURE_OPENAI_REASONING_EFFORT;
+  const reasoningEffort = process.env.AZURE_OPENAI_ENABLE_REASONING_EFFORT === "true"
+    ? process.env.AZURE_OPENAI_REASONING_EFFORT
+    : undefined;
 
   if (reasoningEffort) {
     requestBody.reasoning_effort = reasoningEffort;
   }
 
-  let { response, data } = await sendAzureRequest(targetUrl, apiKey, requestBody);
+  let response: Response;
+  let data: AzureResponse;
+
+  try {
+    ({ response, data } = await sendAzureRequest(targetUrl, apiKey, requestBody));
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error && error.name === "AbortError"
+            ? "Azure OpenAI took too long to respond. Try a shorter prompt."
+            : "Azure OpenAI request failed before a response was returned.",
+      },
+      { status: 504 },
+    );
+  }
+
   const doesNotSupportReasoningEffort =
     data.error?.message?.includes("reasoning_effort") &&
     data.error.message.includes("Unrecognized request argument");
@@ -92,7 +122,20 @@ export async function POST(request: NextRequest) {
     const fallbackBody = { ...requestBody };
 
     delete fallbackBody.reasoning_effort;
-    ({ response, data } = await sendAzureRequest(targetUrl, apiKey, fallbackBody));
+
+    try {
+      ({ response, data } = await sendAzureRequest(targetUrl, apiKey, fallbackBody));
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error && error.name === "AbortError"
+              ? "Azure OpenAI took too long to respond. Try a shorter prompt."
+              : "Azure OpenAI request failed before a response was returned.",
+        },
+        { status: 504 },
+      );
+    }
   }
 
   if (!response.ok) {
