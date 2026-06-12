@@ -532,8 +532,8 @@ export default function Home() {
           </button>
         </div>
 
-        <nav className="history" aria-label="Recent chats">
-          <p>Recent</p>
+        <nav className="history" aria-label="Chat history">
+          <p>History</p>
           <span className="historyStatus">{historyStatus}</span>
           {visibleRecentChats.map((item) => (
             <button

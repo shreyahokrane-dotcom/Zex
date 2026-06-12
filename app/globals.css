@@ -153,9 +153,14 @@ textarea:disabled {
   gap: 18px;
   min-height: 100vh;
   padding: 16px;
-  border-right: 1px solid var(--line);
-  background: rgba(5, 5, 5, 0.88);
-  box-shadow: 18px 0 60px rgba(0, 0, 0, 0.2);
+  border-right: 1px solid rgba(244, 217, 130, 0.18);
+  background:
+    linear-gradient(180deg, rgba(13, 12, 9, 0.98), rgba(4, 5, 5, 0.98)),
+    rgba(5, 5, 5, 0.98);
+  box-shadow:
+    22px 0 70px rgba(0, 0, 0, 0.44),
+    inset -1px 0 0 rgba(244, 217, 130, 0.08);
+  backdrop-filter: blur(18px);
   animation: slideInLeft 0.55s ease-out both;
   transition:
     transform 0.32s ease,
@@ -253,27 +258,36 @@ textarea:disabled {
   flex-direction: column;
   gap: 8px;
   min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .history p {
-  padding: 4px 2px;
-  color: var(--muted);
+  padding: 8px 2px 2px;
+  color: #d7c59c;
   font-size: 0.76rem;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
 .historyStatus {
-  padding: 0 2px 4px;
-  color: var(--gold-soft);
+  padding: 8px 10px;
+  border: 1px solid rgba(244, 217, 130, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 247, 227, 0.035);
+  color: #f1dfb0;
   font-size: 0.74rem;
   line-height: 1.35;
 }
 
 .history button {
-  min-height: 38px;
-  padding: 0 12px;
+  min-height: 42px;
+  padding: 0 13px;
   border-radius: 7px;
   overflow: hidden;
+  background: rgba(255, 247, 227, 0.03);
+  color: #fff3cc;
+  font-weight: 720;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -289,9 +303,15 @@ textarea:disabled {
   background: rgba(217, 170, 47, 0.12);
 }
 
+.history button.activeHistory {
+  color: var(--gold-soft);
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+
 .account {
   padding-top: 16px;
   border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, transparent, rgba(5, 5, 5, 0.72));
 }
 
 .avatar,
