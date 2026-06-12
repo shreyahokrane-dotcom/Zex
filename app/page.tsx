@@ -1,7 +1,15 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, ReactNode, useMemo, useState } from "react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  addDoc,
+  collection,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+} from "firebase/firestore";
 import { firebaseApp, firebaseAuth, firestoreDb } from "../lib/firebase";
 
 type Message = {
@@ -22,6 +30,11 @@ type VideoResult = {
   firestoreId?: string;
 };
 
+type RecentChat = {
+  id: string;
+  title: string;
+};
+
 const initialMessage: Message = {
   id: 1,
   role: "zex",
@@ -37,7 +50,7 @@ const starters = [
   "Analyze a market",
 ];
 
-const history = [
+const fallbackHistory = [
   "Brand direction",
   "Next.js dashboard",
   "Investor Q&A",
@@ -176,11 +189,43 @@ export default function Home() {
   const [videoResult, setVideoResult] = useState<VideoResult | null>(null);
   const [videoError, setVideoError] = useState("");
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
 
   const activeTitle = useMemo(() => {
     const firstUserMessage = messages.find((message) => message.role === "user");
     return firstUserMessage?.content.slice(0, 42) || "New conversation";
   }, [messages]);
+  const visibleRecentChats = recentChats.length
+    ? recentChats
+    : fallbackHistory.map((title) => ({ id: title, title }));
+
+  useEffect(() => {
+    const recentsQuery = query(
+      collection(firestoreDb, "recentChats"),
+      orderBy("createdAt", "desc"),
+      limit(8),
+    );
+
+    return onSnapshot(
+      recentsQuery,
+      (snapshot) => {
+        setRecentChats(
+          snapshot.docs.map((doc) => {
+            const data = doc.data() as { title?: string; prompt?: string };
+            const title = data.title || data.prompt || "Untitled chat";
+
+            return {
+              id: doc.id,
+              title: title.slice(0, 42),
+            };
+          }),
+        );
+      },
+      () => {
+        setRecentChats([]);
+      },
+    );
+  }, []);
 
   async function submitMessage(event?: FormEvent<HTMLFormElement>, starter?: string) {
     event?.preventDefault();
@@ -228,6 +273,15 @@ export default function Home() {
           content,
         },
       ]);
+
+      await addDoc(collection(firestoreDb, "recentChats"), {
+        createdAt: serverTimestamp(),
+        prompt: text,
+        responsePreview: content.slice(0, 240),
+        title: text.slice(0, 42),
+        userEmail: firebaseAuth.currentUser?.email || null,
+        userId: firebaseAuth.currentUser?.uid || null,
+      });
     } catch (error) {
       setMessages((current) => [
         ...current,
@@ -419,9 +473,9 @@ export default function Home() {
 
         <nav className="history" aria-label="Recent chats">
           <p>Recent</p>
-          {history.map((item) => (
-            <button key={item} type="button">
-              {item}
+          {visibleRecentChats.map((item) => (
+            <button key={item.id} type="button">
+              {item.title}
             </button>
           ))}
         </nav>
