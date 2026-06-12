@@ -1,6 +1,18 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, ReactNode, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  addDoc,
+  collection,
+  doc,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
+import { firebaseApp, firebaseAuth, firestoreDb } from "../lib/firebase";
 
 type Message = {
   id: number;
@@ -8,20 +20,60 @@ type Message = {
   content: string;
 };
 
+type ImageResult = {
+  imageUrl: string;
+  prompt: string;
+  revisedPrompt?: string;
+};
+
+type VideoResult = {
+  videoUrl: string;
+  prompt: string;
+  firestoreId?: string;
+};
+
+type RecentChat = {
+  id: string;
+  title: string;
+  messages: Message[];
+};
+
+const initialMessage: Message = {
+  id: 1,
+  role: "zex",
+  content:
+    "Welcome to Zex. Ask for strategy, code, writing, or analysis and I will shape the answer clearly.",
+};
+const chatTimeoutMs = 25000;
+
 const starters = [
-  "Design a launch plan",
-  "Write a product brief",
-  "Debug a React issue",
-  "Summarize meeting notes",
+  "Plan a product launch",
+  "Write a crisp pitch",
+  "Fix a React bug",
+  "Analyze a market",
 ];
 
-const history = [
+const fallbackHistory = [
   "Brand direction",
   "Next.js dashboard",
   "Investor Q&A",
   "Content calendar",
   "API integration",
 ];
+
+function isSavedMessage(value: unknown): value is Message {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const message = value as Partial<Message>;
+
+  return (
+    typeof message.id === "number" &&
+    (message.role === "user" || message.role === "zex") &&
+    typeof message.content === "string"
+  );
+}
 
 function formatInline(text: string): ReactNode[] {
   return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) => {
@@ -140,21 +192,77 @@ function renderFormattedContent(content: string) {
 }
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      role: "zex",
-      content:
-        "Welcome to Zex. Ask for strategy, code, writing, or analysis and I will shape the answer clearly.",
-    },
-  ]);
+  void firebaseApp;
+
+  const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [prompt, setPrompt] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isImageLoading, setIsImageLoading] = useState(false);
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [imageResult, setImageResult] = useState<ImageResult | null>(null);
+  const [imageError, setImageError] = useState("");
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [videoResult, setVideoResult] = useState<VideoResult | null>(null);
+  const [videoError, setVideoError] = useState("");
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [historyStatus, setHistoryStatus] = useState("Connecting to Firestore...");
 
   const activeTitle = useMemo(() => {
     const firstUserMessage = messages.find((message) => message.role === "user");
     return firstUserMessage?.content.slice(0, 42) || "New conversation";
   }, [messages]);
+  const visibleRecentChats = recentChats.length
+    ? recentChats
+    : fallbackHistory.map((title) => ({ id: title, title, messages: [initialMessage] }));
+
+  useEffect(() => {
+    const recentsQuery = query(
+      collection(firestoreDb, "recentChats"),
+      orderBy("createdAt", "desc"),
+      limit(8),
+    );
+
+    return onSnapshot(
+      recentsQuery,
+      (snapshot) => {
+        setHistoryStatus("Firestore connected");
+        setRecentChats(
+          snapshot.docs.map((doc) => {
+            const data = doc.data() as {
+              messages?: unknown;
+              title?: string;
+              prompt?: string;
+            };
+            const title = data.title || data.prompt || "Untitled chat";
+            const savedMessages = Array.isArray(data.messages)
+              ? data.messages.filter(isSavedMessage)
+              : [];
+
+            return {
+              id: doc.id,
+              messages: savedMessages.length ? savedMessages : [initialMessage],
+              title: title.slice(0, 42),
+            };
+          }),
+        );
+      },
+      (error) => {
+        setRecentChats([]);
+        setHistoryStatus(`Firestore error: ${error.message}`);
+      },
+    );
+  }, []);
+
+  function loadHistoryChat(chat: RecentChat) {
+    setActiveChatId(chat.id);
+    setMessages(chat.messages);
+    setPrompt("");
+    setImageError("");
+    setVideoError("");
+  }
 
   async function submitMessage(event?: FormEvent<HTMLFormElement>, starter?: string) {
     event?.preventDefault();
@@ -176,13 +284,16 @@ export default function Home() {
     setIsLoading(true);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), chatTimeoutMs);
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ messages: nextMessages }),
-      });
+        signal: controller.signal,
+      }).finally(() => window.clearTimeout(timeoutId));
       const data = (await response.json()) as { content?: string; error?: string };
 
       if (!response.ok || !data.content) {
@@ -190,15 +301,47 @@ export default function Home() {
       }
 
       const content = data.content;
+      const zexMessage: Message = {
+        id: Date.now() + 1,
+        role: "zex",
+        content,
+      };
+      const completedMessages = [...nextMessages, zexMessage];
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: Date.now() + 1,
-          role: "zex",
-          content,
-        },
-      ]);
+      setMessages(completedMessages);
+      setHistoryStatus("Saving chat history...");
+
+      try {
+        const historyPayload = {
+          messages: completedMessages,
+          prompt: text,
+          responsePreview: content.slice(0, 240),
+          title:
+            completedMessages.find((message) => message.role === "user")?.content.slice(0, 42) ||
+            text.slice(0, 42),
+          updatedAt: serverTimestamp(),
+          userEmail: firebaseAuth.currentUser?.email || null,
+          userId: firebaseAuth.currentUser?.uid || null,
+        };
+
+        if (activeChatId) {
+          await updateDoc(doc(firestoreDb, "recentChats", activeChatId), historyPayload);
+        } else {
+          const chatDocument = await addDoc(collection(firestoreDb, "recentChats"), {
+            ...historyPayload,
+            createdAt: serverTimestamp(),
+          });
+
+          setActiveChatId(chatDocument.id);
+        }
+        setHistoryStatus("Chat history saved");
+      } catch (saveError) {
+        setHistoryStatus(
+          saveError instanceof Error
+            ? `Firestore save failed: ${saveError.message}`
+            : "Firestore save failed. Check Firestore rules and authentication.",
+        );
+      }
     } catch (error) {
       setMessages((current) => [
         ...current,
@@ -206,7 +349,9 @@ export default function Home() {
           id: Date.now() + 1,
           role: "zex",
           content:
-            error instanceof Error
+            error instanceof Error && error.name === "AbortError"
+              ? "That request took too long. Try a shorter message or ask for a brief answer."
+              : error instanceof Error
               ? error.message
               : "Zex could not connect to Azure OpenAI.",
         },
@@ -217,8 +362,131 @@ export default function Home() {
   }
 
   function resetChat() {
-    setMessages(messages.slice(0, 1));
+    setActiveChatId(null);
+    setMessages([initialMessage]);
     setPrompt("");
+  }
+
+  async function generateImage() {
+    const text = prompt.trim();
+
+    if (isImageLoading) {
+      return;
+    }
+
+    setImageResult(null);
+    setImageError("");
+    setIsImageModalOpen(true);
+
+    if (!text) {
+      setImageError("Type an image prompt first, then use the image button.");
+      return;
+    }
+
+    setIsImageLoading(true);
+
+    try {
+      const response = await fetch("/api/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt: text }),
+      });
+      const data = (await response.json()) as {
+        imageUrl?: string;
+        revisedPrompt?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !data.imageUrl) {
+        throw new Error(data.error || "Zex could not generate an image.");
+      }
+
+      setImageResult({
+        imageUrl: data.imageUrl,
+        prompt: text,
+        revisedPrompt: data.revisedPrompt,
+      });
+    } catch (error) {
+      setImageError(
+        error instanceof Error ? error.message : "Zex could not connect to image generation.",
+      );
+    } finally {
+      setIsImageLoading(false);
+    }
+  }
+
+  async function generateVideo() {
+    const text = prompt.trim();
+
+    if (isVideoLoading) {
+      return;
+    }
+
+    setVideoResult(null);
+    setVideoError("");
+    setIsVideoModalOpen(true);
+
+    if (!text) {
+      setVideoError("Type a video prompt first, then use the video button.");
+      return;
+    }
+
+    setIsVideoLoading(true);
+
+    try {
+      const response = await fetch("/api/video", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt: text }),
+      });
+      const data = (await response.json()) as {
+        videoUrl?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !data.videoUrl) {
+        throw new Error(data.error || "Zex could not generate a video.");
+      }
+
+      setVideoResult({
+        videoUrl: data.videoUrl,
+        prompt: text,
+      });
+
+      try {
+        const videoUrlCanBeStored = !data.videoUrl.startsWith("data:");
+        const videoDocument = await addDoc(collection(firestoreDb, "generatedVideos"), {
+          createdAt: serverTimestamp(),
+          prompt: text,
+          videoUrl: videoUrlCanBeStored ? data.videoUrl : "",
+          videoStorageType: videoUrlCanBeStored ? "url" : "inline_data_not_saved",
+          userEmail: firebaseAuth.currentUser?.email || null,
+          userId: firebaseAuth.currentUser?.uid || null,
+        });
+
+        setVideoResult({
+          videoUrl: data.videoUrl,
+          prompt: text,
+          firestoreId: videoDocument.id,
+        });
+      } catch (saveError) {
+        setVideoError(
+          saveError instanceof Error
+            ? `Video generated, but Firestore save failed: ${saveError.message}`
+            : "Video generated, but Firestore save failed.",
+        );
+      }
+    } catch (error) {
+      setVideoError(
+        error instanceof Error ? error.message : "Zex could not connect to video generation.",
+      );
+    } finally {
+      setIsVideoLoading(false);
+    }
   }
 
   function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -229,28 +497,61 @@ export default function Home() {
   }
 
   return (
-    <main className="shell">
+    <main className={`shell ${isSidebarOpen ? "sidebarOpen" : "sidebarClosed"}`}>
+      <video className="backgroundVideo" autoPlay muted loop playsInline aria-hidden="true">
+        <source src="/bg.mp4" type="video/mp4" />
+      </video>
+
+      <button
+        className={`sidebarToggle ${isSidebarOpen ? "active" : ""}`}
+        type="button"
+        aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+        aria-expanded={isSidebarOpen}
+        onClick={() => setIsSidebarOpen((current) => !current)}
+      >
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+      </button>
+
+      {isSidebarOpen ? (
+        <button
+          className="sidebarBackdrop"
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      ) : null}
+
       <aside className="sidebar" aria-label="Conversation navigation">
-        <div className="brand">
-          <div className="brandMark" aria-hidden="true">
-            Z
+        <div className="sidebarTop">
+          <div className="brand">
+            <div className="brandMark" aria-hidden="true">
+              Z
+            </div>
+            <div>
+              <p>Zex</p>
+              <span>Gold intelligence</span>
+            </div>
           </div>
-          <div>
-            <p>Zex</p>
-            <span>Gold intelligence</span>
-          </div>
+
+          <button className="newChat" type="button" onClick={resetChat}>
+            <span aria-hidden="true">+</span>
+            New chat
+          </button>
         </div>
 
-        <button className="newChat" type="button" onClick={resetChat}>
-          <span aria-hidden="true">+</span>
-          New chat
-        </button>
-
-        <nav className="history" aria-label="Recent chats">
-          <p>Recent</p>
-          {history.map((item) => (
-            <button key={item} type="button">
-              {item}
+        <nav className="history" aria-label="Chat history">
+          <p>History</p>
+          <span className="historyStatus">{historyStatus}</span>
+          {visibleRecentChats.map((item) => (
+            <button
+              className={item.id === activeChatId ? "activeHistory" : ""}
+              key={item.id}
+              type="button"
+              onClick={() => loadHistoryChat(item)}
+            >
+              {item.title}
             </button>
           ))}
         </nav>
@@ -272,12 +573,22 @@ export default function Home() {
             <span className="eyebrow">Zex</span>
             <h1>{activeTitle}</h1>
           </div>
-          <button className="iconButton" type="button" aria-label="Open settings">
-            ...
-          </button>
+          <div className="topbarActions">
+            <button className="modelButton" type="button">
+              Aurum 4
+            </button>
+            <button className="iconButton" type="button" aria-label="Open settings">
+              <span aria-hidden="true" />
+            </button>
+          </div>
         </header>
 
         <div className="messages" aria-live="polite">
+          <div className="heroPrompt" aria-hidden={messages.length > 1}>
+            <div className="heroMark">Z</div>
+            <h2>What can I help with?</h2>
+          </div>
+
           {messages.map((message) => (
             <article className={`message ${message.role}`} key={message.id}>
               <div className="messageAvatar" aria-hidden="true">
@@ -294,9 +605,13 @@ export default function Home() {
               <div className="messageAvatar" aria-hidden="true">
                 Z
               </div>
-              <div className="bubble">
+              <div className="bubble loadingBubble">
                 <span>Zex</span>
-                <p>Thinking...</p>
+                <div className="typing" aria-label="Zex is thinking">
+                  <i />
+                  <i />
+                  <i />
+                </div>
               </div>
             </article>
           ) : null}
@@ -325,11 +640,120 @@ export default function Home() {
             rows={1}
             disabled={isLoading}
           />
+          <button
+            className="imageGenerateButton"
+            type="button"
+            aria-label="Generate image"
+            disabled={isLoading || isImageLoading || isVideoLoading}
+            onClick={generateImage}
+          >
+            <span aria-hidden="true" />
+          </button>
+          <button
+            className="videoGenerateButton"
+            type="button"
+            aria-label="Generate video"
+            disabled={isLoading || isImageLoading || isVideoLoading}
+            onClick={generateVideo}
+          >
+            <span aria-hidden="true" />
+          </button>
           <button type="submit" aria-label="Send message" disabled={isLoading}>
             ^
           </button>
         </form>
       </section>
+
+      {isImageModalOpen ? (
+        <div className="imageModalBackdrop" role="presentation">
+          <section
+            className="imageModal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Generated image"
+          >
+            <header className="imageModalHeader">
+              <div>
+                <span className="eyebrow">Image generation</span>
+                <h2>{imageResult ? "Generated image" : "Creating image"}</h2>
+              </div>
+              <button
+                className="modalCloseButton"
+                type="button"
+                aria-label="Close image preview"
+                onClick={() => setIsImageModalOpen(false)}
+              >
+                x
+              </button>
+            </header>
+
+            <div className="imagePreview">
+              {isImageLoading ? (
+                <div className="imageLoading" aria-label="Generating image">
+                  <i />
+                  <i />
+                  <i />
+                </div>
+              ) : null}
+              {!isImageLoading && imageError ? <p className="imageError">{imageError}</p> : null}
+              {!isImageLoading && imageResult ? (
+                <img src={imageResult.imageUrl} alt={imageResult.prompt} />
+              ) : null}
+            </div>
+
+            {imageResult?.revisedPrompt ? (
+              <p className="imagePrompt">{imageResult.revisedPrompt}</p>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+
+      {isVideoModalOpen ? (
+        <div className="imageModalBackdrop" role="presentation">
+          <section
+            className="imageModal videoModal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Generated video"
+          >
+            <header className="imageModalHeader">
+              <div>
+                <span className="eyebrow">Video generation</span>
+                <h2>{videoResult ? "Generated video" : "Creating video"}</h2>
+              </div>
+              <button
+                className="modalCloseButton"
+                type="button"
+                aria-label="Close video preview"
+                onClick={() => setIsVideoModalOpen(false)}
+              >
+                x
+              </button>
+            </header>
+
+            <div className="imagePreview videoPreview">
+              {isVideoLoading ? (
+                <div className="imageLoading" aria-label="Generating video">
+                  <i />
+                  <i />
+                  <i />
+                </div>
+              ) : null}
+              {!isVideoLoading && videoError ? <p className="imageError">{videoError}</p> : null}
+              {!isVideoLoading && videoResult ? (
+                <video src={videoResult.videoUrl} controls playsInline />
+              ) : null}
+            </div>
+
+            {videoResult ? (
+              <p className="imagePrompt">
+                {videoResult.prompt}
+                {videoResult.firestoreId ? ` Saved as ${videoResult.firestoreId}.` : ""}
+              </p>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
