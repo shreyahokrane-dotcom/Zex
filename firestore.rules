@@ -1,0 +1,45 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAllowedChatDocument() {
+      return request.resource.data.keys().hasOnly([
+        'createdAt',
+        'messages',
+        'prompt',
+        'responsePreview',
+        'title',
+        'updatedAt',
+        'userEmail',
+        'userId'
+      ]);
+    }
+
+    function isAllowedVideoDocument() {
+      return request.resource.data.keys().hasOnly([
+        'createdAt',
+        'prompt',
+        'videoStorageType',
+        'videoUrl',
+        'userEmail',
+        'userId'
+      ]);
+    }
+
+    match /recentChats/{chatId} {
+      allow read: if true;
+      allow create, update: if isAllowedChatDocument();
+      allow delete: if false;
+    }
+
+    match /generatedVideos/{videoId} {
+      allow read: if true;
+      allow create, update: if isAllowedVideoDocument();
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
